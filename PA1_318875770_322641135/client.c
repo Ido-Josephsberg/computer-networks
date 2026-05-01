@@ -5,7 +5,9 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <unistd.h>
+#include <sys/types.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
 
 
 // Structure to represent a job message
