@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 199309L
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
@@ -9,13 +9,15 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
+#define GIGA 1000000000L
+
 
 // Structure to represent a job message
 typedef struct __attribute__((__packed__)) {
-    uint32_t client_id; // ID of the client sending the job (process ID)
-    uint16_t job_id;     // Number of the job in that client (starts at 0)
+    uint32_t client_id;       // ID of the client sending the job (process ID)
+    uint16_t job_id;          // Number of the job in that client (starts at 0)
     uint32_t execution_time;  // Execution time (in nanoseconds) of the job
-} job_message_t;
+} job_message;
 
 double randexp(double lambda) {
     /**
@@ -28,18 +30,19 @@ double randexp(double lambda) {
     return -log(1.0 - u) / lambda;
 }
 
-int send_job_message(int socket_fd, struct sockaddr_in *server_addr, uint16_t job_id, uint32_t execution_time) {
+int send_job_message(int socket_fd, struct sockaddr_in *server_addr, uint32_t client_id, uint16_t job_id, uint32_t execution_time) {
     /**
      * @brief Send a job message to the server.
      * @param socket_fd the file descriptor of the UDP socket to send the job message to the server.
      * @param server_addr the address of the server to send the job message to.
+     * @param client_id the ID of the client sending the job (process ID) to include in the job message.
      * @param job_id the number of the job in that client (starts at 0).
      * @param execution_time the execution time (in nanoseconds) of the job to send in the message.
      * @return 0 on success, non-zero on failure.
      */
 
-    job_message_t job_message;
-    job_message.client_id = htonl(getpid());
+    job_message job_message;
+    job_message.client_id = htonl(client_id);
     job_message.job_id = htons(job_id);
     job_message.execution_time = htonl(execution_time);
 
@@ -67,10 +70,10 @@ int execute_all_jobs(int num_jobs, double lambda, double mu, int socket_fd, stru
 
     double x, y;
     int sleep_error, send_error;
-    uint32_t floor_x, floor_y;
+    uint32_t floor_x, floor_y, pid = (uint32_t) getpid();
     struct timespec sleep_time = {0, 0};
     
-    for (uint16_t i = 0; i < (uint16_t)num_jobs; i++) {
+    for (int i = 0; i < num_jobs; i++) {
         // sample two exponential random variables
         x = randexp(lambda);
         y = randexp(mu);
@@ -79,18 +82,18 @@ int execute_all_jobs(int num_jobs, double lambda, double mu, int socket_fd, stru
         floor_x = (uint32_t) floor(x * 1e6);
         floor_y = (uint32_t) floor(y * 1e6);
         // Set the sleep time to x and sleep.
-        sleep_time.tv_sec = floor_x / 1e9;
-        sleep_time.tv_nsec = (long) (floor_x % (uint32_t)1e9);
+        sleep_time.tv_sec = floor_x / GIGA;
+        sleep_time.tv_nsec = (long) (floor_x % GIGA);
         sleep_error = nanosleep(&sleep_time, NULL);
         if (sleep_error != 0) {
             perror("nanosleep");
             return 1;
         }
         // Send a job message to the server. Return if there is an error sending the message.
-        if ((send_error = send_job_message(socket_fd, server_addr, i, floor_y))) {
+        if ((send_error = send_job_message(socket_fd, server_addr, pid, (uint16_t) i, floor_y))) {
             return send_error;
         }
-        printf("%08x:%04x\t%d:%d\t%d\t%d\n", ntohl((server_addr->sin_addr).s_addr), ntohs(server_addr->sin_port), getpid(), i, floor_x, floor_y);
+        printf("%08x:%04x\t%d:%d\t%d\t%d\n", ntohl((server_addr->sin_addr).s_addr), ntohs(server_addr->sin_port), pid, (uint16_t) i, floor_x, floor_y);
     }
     return 0;
 }
