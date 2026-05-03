@@ -41,13 +41,13 @@ int send_job_message(int socket_fd, struct sockaddr_in *server_addr, uint32_t cl
      * @return 0 on success, non-zero on failure.
      */
 
-    job_message job_message;
-    job_message.client_id = htonl(client_id);
-    job_message.job_id = htons(job_id);
-    job_message.execution_time = htonl(execution_time);
+    job_message job_msg;
+    job_msg.client_id = htonl(client_id);
+    job_msg.job_id = htons(job_id);
+    job_msg.execution_time = htonl(execution_time);
 
     // Send the job message to the server
-    ssize_t bytes_sent = sendto(socket_fd, &job_message, sizeof(job_message), 0, (struct sockaddr *)server_addr, sizeof(*server_addr));
+    ssize_t bytes_sent = sendto(socket_fd, &job_msg, sizeof(job_msg), 0, (struct sockaddr *)server_addr, sizeof(*server_addr));
     if (bytes_sent == -1) {
         perror("sendto");
         return 1;
@@ -124,14 +124,14 @@ int main(int argc, char *argv[]) {
     }
     // Convert port, num_jobs, and seed from command line arguments to int:
     // TODO: Should we check for conversion errors here? Instructions say we can assume the arguments are valid.
-    port = strtol(argv[2], NULL, 10);
-    num_jobs = strtol(argv[3], NULL, 10);
-    seed = strtol(argv[4], NULL, 10);
+    port = (int) strtol(argv[2], NULL, 10);
+    num_jobs = (int) strtol(argv[3], NULL, 10);
+    seed = (int) strtol(argv[4], NULL, 10);
     // Convert lambda and mu from command line arguments to double:
     lambda = strtod(argv[5], NULL);
     mu = strtod(argv[6], NULL);
     // Set the random seed.
-    srand(seed);
+    srand((unsigned int) seed);
     // Create a UDP socket.
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
     }
     // Set up the server address structure.
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
+    server_addr.sin_port = htons((uint16_t) port);
     server_addr.sin_addr = ip;
 
     // Generate and execute num_jobs jobs.

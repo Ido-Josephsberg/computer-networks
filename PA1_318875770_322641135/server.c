@@ -78,6 +78,7 @@ int init_job_queue(job_queue_struct *job_queue, struct job_queue *job_queue_head
     }
     if (cnd_init(&(job_queue->job_queue_cond)) != thrd_success) {
         fprintf(stderr, "Failed to initialize condition variable for job queue\n");
+        mtx_destroy(&(job_queue->job_queue_mutex));
         return 1;
     }
     return 0;
@@ -241,9 +242,9 @@ int main (int argc, char *argv[]) {
     }
     // Convert port, num_jobs, and qsize from command line arguments to int:
     // TODO: Should we check for conversion errors here? Instructions say we can assume the arguments are valid.
-    port = strtol(argv[1], NULL, 10);
-    num_jobs = strtol(argv[2], NULL, 10);
-    qsize = strtol(argv[3], NULL, 10);
+    port = (int) strtol(argv[1], NULL, 10);
+    num_jobs = (int) strtol(argv[2], NULL, 10);
+    qsize = (int) strtol(argv[3], NULL, 10);
 
 
     // Create a UDP socket.
