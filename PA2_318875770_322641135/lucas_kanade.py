@@ -118,7 +118,7 @@ def lucas_kanade_step(I1: np.ndarray,
     Ix = signal.convolve2d(I2, X_DERIVATIVE_FILTER, boundary='symm', mode='same')
     Iy = signal.convolve2d(I2, Y_DERIVATIVE_FILTER, boundary='symm', mode='same')
     # Temporal gradient between frames
-    It = I2 - I1
+    It = I2.astype(np.float64) - I1.astype(np.float64)
 
     # Initialize flow increments
     du = np.zeros(I1.shape)
@@ -141,13 +141,13 @@ def lucas_kanade_step(I1: np.ndarray,
             A = np.stack((Ix_window.flatten(), Iy_window.flatten()), axis=1)
             b = -It_window.flatten()
 
-            # Solve for (u, v) in the local window
-            flow, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+            if np.abs(np.linalg.det(A.T @ A)) > 1e-6:  
+                # Solve for (u, v) in the local window
+                flow, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+                # Store local flow at the current pixel
+                du[row, col] = flow[0]
+                dv[row, col] = flow[1]
 
-            # Store local flow at the current pixel
-            du[row, col] = flow[0]
-            dv[row, col] = flow[1]
-            
     return du, dv
 
 
@@ -493,7 +493,7 @@ def faster_lucas_kanade_step(I1: np.ndarray,
         A = np.stack([Ix_win, Iy_win], axis=1)
         b = -It_win
         AtA = A.T @ A
-        if np.linalg.det(AtA) != 0:
+        if np.abs(np.linalg.det(AtA)) > 1e-6:
             flow = np.linalg.lstsq(AtA, A.T @ b, rcond=None)[0]
             du[r, c] = flow[0]
             dv[r, c] = flow[1]
@@ -659,13 +659,9 @@ def lucas_kanade_faster_video_stabilization_fix_effects(
     h_orig, w_orig = params['height'], params['width']
     fps = params['fps']
     frame_count = params['frame_count']
- 
-    # Output dimensions after cropping border effects
-    h_crop = h_orig - start_rows - end_rows
-    w_crop = w_orig - start_cols - end_cols
- 
+  
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    out = cv2.VideoWriter(output_video_path, fourcc, fps, (w_crop, h_crop),
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, (w_orig, h_orig),
                           isColor=False)
  
     ret, first_frame = cap.read()
@@ -677,7 +673,8 @@ def lucas_kanade_faster_video_stabilization_fix_effects(
     # Write first frame cropped
     first_cropped = first_gray[start_rows:h_orig - end_rows,
                                start_cols:w_orig - end_cols]
-    out.write(first_cropped)
+    resized_first_cropped = cv2.resize(first_cropped, (w_orig, h_orig))
+    out.write(resized_first_cropped)
  
     # Compute padded image size for optical flow
     h_factor = int(np.ceil(h_orig / (2 ** (num_levels - 1))))
@@ -719,12 +716,12 @@ def lucas_kanade_faster_video_stabilization_fix_effects(
         # Warp and resize back to original resolution
         warped = warp_image(curr_frame, u_accum, v_accum)
         warped = np.clip(warped, 0, 255).astype(np.uint8)
-        warped_orig = cv2.resize(warped, (w_orig, h_orig))
- 
         # Crop away border artefacts
-        warped_cropped = warped_orig[start_rows:h_orig - end_rows,
+        warped_cropped = warped[start_rows:h_orig - end_rows,
                                      start_cols:w_orig - end_cols]
-        out.write(warped_cropped)
+        # Resize back to original dimensions
+        warped_orig_dim = cv2.resize(warped_cropped, (w_orig, h_orig))
+        out.write(warped_orig_dim)
  
     cap.release()
     out.release()
