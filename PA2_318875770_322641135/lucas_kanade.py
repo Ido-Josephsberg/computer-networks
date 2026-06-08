@@ -463,11 +463,11 @@ def faster_lucas_kanade_step(I1: np.ndarray,
     Calculate du and dv correctly.
     """
     height, width = I1.shape
-    if min(height, width) <= window_size * 5:
+    if min(height, width) < 100:
         return lucas_kanade_step(I1, I2, window_size)
 
     I2_float = I2.astype(np.float32)
-    harris = cv2.cornerHarris(I2_float, blockSize=window_size, ksize=3, k=0.04)
+    harris = cv2.cornerHarris(I2_float, blockSize=2, ksize=3, k=0.04)
     threshold = 0.01 * harris.max()
     corner_mask = harris > threshold
     corner_rows, corner_cols = np.where(corner_mask)
@@ -613,21 +613,18 @@ def lucas_kanade_faster_video_stabilization(
  
         valid_du = du[half_w:-half_w, half_w:-half_w]
         valid_dv = dv[half_w:-half_w, half_w:-half_w]
-        du_mask = valid_du != 0
-        dv_mask = valid_dv != 0
-        du_mean = valid_du[du_mask].mean() if np.any(du_mask) else 0.0
-        dv_mean = valid_dv[dv_mask].mean() if np.any(dv_mask) else 0.0
- 
+        du_mean = np.nanmean(valid_du)
+        dv_mean = np.nanmean(valid_dv)
+
         u_accum = u_accum + du_mean
         v_accum = v_accum + dv_mean
- 
+
         prev_frame = curr_frame
- 
-        warped = warp_image(curr_frame, u_accum, v_accum)
+
+        warped = warp_image(gray, u_accum, v_accum)
         warped = np.clip(warped, 0, 255).astype(np.uint8)
-        warped_out = cv2.resize(warped, (w_orig, h_orig))
-        out.write(warped_out)
- 
+        out.write(warped)
+
     cap.release()
     out.release()
     cv2.destroyAllWindows()
@@ -703,18 +700,16 @@ def lucas_kanade_faster_video_stabilization_fix_effects(
  
         valid_du = du[half_w:-half_w, half_w:-half_w]
         valid_dv = dv[half_w:-half_w, half_w:-half_w]
-        du_mask = valid_du != 0
-        dv_mask = valid_dv != 0
-        du_mean = valid_du[du_mask].mean() if np.any(du_mask) else 0.0
-        dv_mean = valid_dv[dv_mask].mean() if np.any(dv_mask) else 0.0
- 
+        du_mean = np.nanmean(valid_du)
+        dv_mean = np.nanmean(valid_dv)
+
         u_accum = u_accum + du_mean
         v_accum = v_accum + dv_mean
- 
+
         prev_frame = curr_frame
- 
+
         # Warp and resize back to original resolution
-        warped = warp_image(curr_frame, u_accum, v_accum)
+        warped = warp_image(gray, u_accum, v_accum)
         warped = np.clip(warped, 0, 255).astype(np.uint8)
         # Crop away border artefacts
         warped_cropped = warped[start_rows:h_orig - end_rows,
