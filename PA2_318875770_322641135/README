@@ -1,0 +1,207 @@
+Programming Assignment 2: Distributed Bellman-Ford
+==================================================
+
+Team
+----
+  <Name 1>, ID 318875770
+  <Name 2>, ID 322641135
+
+(Please replace the names above before submission.)
+
+
+Overview
+--------
+bfproc is the node process for the distributed Bellman-Ford algorithm. Every node
+communicates only with its direct neighbours, through the provided netproc
+simulator, and from those exchanges it works out three things: the root, which is
+the smallest node ID in the reachable network; the cost of its shortest path to
+that root; and its parent, meaning the next-hop node on the way to the root. We
+wrote only the node process; netproc is given and we do not modify it.
+
+
+Building
+--------
+Run "make" to produce the executable named bfproc, and "make clean" to remove the
+build products. The code is compiled with:
+
+  -Wall -Wextra -O2 -std=c11 -D_POSIX_C_SOURCE=200809L
+
+The _POSIX_C_SOURCE definition is necessary because we use clock_gettime and
+CLOCK_REALTIME, which are POSIX rather than ISO C; under strict -std=c11 they are
+not declared without it, so the macro is part of CFLAGS in the Makefile rather
+than something the grader needs to supply. The build is clean, with no warnings.
+
+
+Running
+-------
+  bfproc <netproc_address> <node_id> <lifetime_sec> <cost1> [cost2 ...]
+
+For example:
+
+  ./bfproc 127.0.0.1 2 16 $(./costs.sh topology.csv 2)
+
+netproc_address is the IP of the host running netproc; the port is fixed at 6789.
+node_id is this node's integer ID, and lifetime_sec is how many seconds the
+process runs before shutting down gracefully. The remaining arguments are the
+link costs in port order, exactly as the provided costs.sh script emits them
+(that is, in the order the links appear in the configuration file). Cost number i
+on the command line corresponds to the local link index i that netproc uses to
+tag the frames arriving on that link.
+
+
+Source files
+------------
+  bf.h         Provided constants (PORT, HELLO_TIMEOUT, ROOT_TIMEOUT); unmodified.
+  proto.h      The wire framing and the update-message struct, with pack/unpack.
+  time_util.h  now_ms(), the single CLOCK_REALTIME time source (header-only).
+  net.h, net.c     Socket setup, the ID handshake, and 128-byte frame I/O.
+  bfnode.h, bfnode.c  The node state and the Bellman-Ford update, refresh, and
+                      expiry logic, kept free of any socket code.
+  bfproc.c     main(): argument parsing, the select() event loop, the timers, and
+               all of the printed output.
+
+
+Design
+------
+Because a node has only one socket to watch (its connection to netproc), we chose
+a single-threaded design built around select(), rather than a multi-threaded one
+with a timer per thread. This avoids any need for locking and keeps the output
+ordering deterministic, which matters because a state line must be printed only
+when the root or the cost changes, while a "message sent" line is printed on
+every send.
+
+We keep three timers, each stored as an absolute deadline in milliseconds: the
+hello timer, which guarantees a message at least every HELLO_TIMEOUT seconds and
+is reset whenever we send; the root-expiry timer, which fires when the current
+(non-self) root information expires; and the lifetime timer. On each pass through
+the loop we take the soonest of the three deadlines, subtract the current time,
+express the result as a struct timeval, and hand that to select() as its timeout.
+This is the approach the course FAQ recommends, namely doing the arithmetic on a
+struct timeval. When select() returns, we check the conditions in a fixed order:
+lifetime first, then any incoming frame, then root expiry, then the hello timer.
+
+
+Data structures
+---------------
+The whole of a node's view lives in one struct, node_state (see bfnode.h): my_id,
+my_root and my_cost; parent_link (the local link index of the next hop) together
+with parent_id (the next hop's node ID, which is what we print); exp_deadline_ms,
+the absolute time at which the current root information expires (infinite while we
+are our own root); and costs[], the per-link cost array with its length.
+
+
+Packet structure
+----------------
+netproc always transfers exactly 128 bytes at a time: one link byte followed by a
+127-byte payload. On the way out, byte zero is the link number, and we always use
+0xFF to broadcast. netproc rewrites that byte to the receiver's own link index
+and copies the 127 payload bytes through unchanged, so from a node's point of view
+both directions are simply 128-byte frames.
+
+The 127-byte payload carries the update message, defined as struct bf_msg in
+proto.h. It uses the first 16 bytes and zero-pads the rest. All four fields are
+32-bit and sent in network byte order: root (the smallest known ID), cost (the
+cost to that root), id (the sender, which becomes the receiver's parent), and
+exp_ms (the remaining lifetime, in milliseconds). The payload is private to
+bfproc, since netproc never looks inside it and the grader runs only our own
+bfproc instances together, so we were free to choose the layout and units.
+
+
+Multiple timeouts and the choice of units
+-----------------------------------------
+Every internal duration in the program, both the timer deadlines and the expTime
+field, is expressed in milliseconds. The constants in bf.h, HELLO_TIMEOUT (2) and
+ROOT_TIMEOUT (6), are in seconds, so they are multiplied by 1000 at each point
+where they are used. We treated that conversion as an explicit invariant and
+noted it in a comment at every such site, since a forgotten factor of 1000 is the
+one place a unit bug could hide.
+
+We chose milliseconds for expTime deliberately. The assignment gives no unit for
+it on the wire (the "expTime = 100" in the text is only an illustration), and the
+rules that do matter are unit-agnostic: a message originates with expTime equal to
+ROOT_TIMEOUT, real elapsed time is subtracted on every forward, and the value may
+only increase when a fresher message arrives for the same root. Since output is
+printed to a tenth of a second and the timeouts are 2 and 6 seconds, aging needs
+sub-second resolution; an integer-second expTime would truncate and drift, which
+could cause premature or late expiry. Milliseconds avoid that.
+
+Aging is implemented with absolute deadlines. When a node adopts root information
+it records exp_deadline = now + exp_ms, and when it forwards it sends
+exp_ms = deadline - now. The example from the assignment, where a message received
+at time 3 with expTime 100 is resent at time 12 with expTime 91, then falls out
+naturally. A message about the same root refreshes the deadline only when it would
+push it later, which is how we honour the rule that expTime may only increase. A
+node that is its own root has an infinite deadline and originates exp_ms equal to
+ROOT_TIMEOUT in milliseconds. When a deadline passes, the node resets to being its
+own root, which is how the algorithm recovers from a root crash.
+
+
+The update logic
+----------------
+When a message with root R, cost C, sender S and expTime E arrives on link L whose
+cost is lc, the candidate cost to R through that neighbour is C + lc. If R is
+smaller than our current root we always adopt it, taking S as our parent and
+C + lc as our cost, and we start a fresh deadline. If R equals our current root
+and we are not our own root, we first refresh the deadline if E would make it
+later. We then follow our current parent if the message came from it, accepting
+its cost even if it has increased, which is what keeps distance-vector correct in
+the presence of loops; otherwise we switch to S only if it offers a strictly
+cheaper path, and on an equal-cost tie we keep our current parent so the tree does
+not flap. If R is larger than our root we ignore the message. We print a new state
+line and broadcast only when the root or the cost actually changed; refreshing a
+deadline on its own is not a change.
+
+
+Output format
+-------------
+Times are printed relative to when the process started. We capture start_ms once
+at the top of main() and, for each event, print (now_ms() - start_ms) / 1000 using
+the required format. This still satisfies Note 1 in the assignment, since the
+clock source is CLOCK_REALTIME and the relative time is simply one CLOCK_REALTIME
+reading minus another, and it matches the small, monotonically increasing
+timestamps in the example. The initial state is therefore printed at about
+time 0.0. The three formats are:
+
+  time=%.01f\tRoot=%d\tparent=%d\tdistance=%d\n
+  time=%.01f\tMessage sent to all neighbors\n
+  time=%.01f\tLifetime expired. Shutting down.\n
+
+When a node is its own root it prints parent=NULL and distance 0. Otherwise the
+parent is printed as the parent node's ID, taken from the chosen message's id
+field. We read this from the assignment's own example, where a node with four
+links prints parent=217: that cannot be a link index, which would be 0 to 3, so
+the value being asked for must be a node ID.
+
+
+Socket details
+--------------
+Following the course FAQ, we set TCP_NODELAY on the socket, receive with
+MSG_WAITALL so that a whole 128-byte frame arrives in a single call (a readn loop
+is kept as a defensive fallback for a short read), and send with MSG_NOSIGNAL so
+that a dead netproc produces an EPIPE error instead of a SIGPIPE that would kill
+the process. An EPIPE on send, or a recv that returns zero, is treated as netproc
+having gone away, and the node then cleans up and exits. The handshake is simple:
+right after connect() the node sends its ID as a four-byte integer in network byte
+order. When the lifetime expires the node prints the shutdown line, closes the
+socket, frees its memory, and exits.
+
+
+Testing
+-------
+We tested against the provided netproc. The two scenarios below use a line
+topology of three nodes, which is described by this configuration file (the same
+format netproc and costs.sh expect, one "endpoint1,endpoint2,cost" per line):
+
+  1,2,10
+  2,3,5
+
+With every node started at once, the network converges to root 1: node 2 reaches
+it directly with parent 1 and distance 10, and node 3 reaches it through node 2
+with parent 2 and distance 15. Hello beacons appear every two seconds and each
+node shuts down cleanly when its lifetime ends.
+
+To check root-crash recovery we gave node 1 a short lifetime so that it leaves
+after about three seconds. Roughly ROOT_TIMEOUT seconds later, nodes 2 and 3 let
+their root-1 information expire and each becomes its own root, and shortly
+afterwards the network re-elects node 2 as the new root, with node 3 settling on
+parent 2 and distance 5.
