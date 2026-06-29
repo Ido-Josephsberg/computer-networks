@@ -1,0 +1,8 @@
+#ifndef BELLMAN_FORD_H_
+#define BELLMAN_FORD_H_
+
+#define PORT		6789
+#define HELLO_TIMEOUT	2
+#define ROOT_TIMEOUT	(3*HELLO_TIMEOUT)
+
+#endif // BELLMAN_FORD_H_
