@@ -1,17 +1,12 @@
 /*
- * bfproc - a node process for the distributed Bellman-Ford assignment.
+ * bfproc: one node in the distributed Bellman-Ford network. It talks only to its
+ * direct neighbours (via netproc) and works out the root, its distance to it,
+ * and the next hop toward it.
  *
- * Each node talks only to its direct neighbours through the netproc simulator
- * and computes: the root (smallest ID in the network), its cost to that root,
- * and its parent (the next-hop node toward the root).
- *
- * Design: single-threaded, select()-based. Three timers are tracked as absolute
- * deadlines in milliseconds (hello beacon, root-info expiry, process lifetime);
- * the select() timeout is (min(deadlines) - now) rendered as a struct timeval.
- *
- * TIME UNITS: all internal arithmetic is in milliseconds. bf.h's HELLO_TIMEOUT
- * and ROOT_TIMEOUT are in SECONDS and are multiplied by 1000 at every use.
- * The printed time is relative to start: (now_ms() - start_ms) / 1000.
+ * Single-threaded, select()-driven. We wait on three deadlines - the hello
+ * beacon, our root info going stale, and the process lifetime - each an absolute
+ * time in ms, and sleep until the nearest. bf.h's timeouts are in seconds, so
+ * they get a x1000. Printed times are measured from startup.
  */
 
 #include <errno.h>
@@ -28,14 +23,14 @@
 #include "proto.h"
 #include "time_util.h"
 
-/* Captured once at the top of main(); used only to print relative timestamps. */
+/* Set at startup; printed times are relative to this. */
 static double start_ms;
 
 static float event_time(double now) {
 	return (float) (now - start_ms) / 1e3f;
 }
 
-/* Print the node's current view. Self-root prints parent=NULL, distance=0. */
+/* Print where we sit in the tree; self-root has no parent, so NULL / distance 0. */
 static void print_state(const struct node_state* s, double now) {
 	if (node_is_self_root(s)) {
 		printf("time=%.01f\tRoot=%d\tparent=NULL\tdistance=%d\n",
@@ -47,10 +42,8 @@ static void print_state(const struct node_state* s, double now) {
 	fflush(stdout);
 }
 
-/*
- * Broadcast our current view to all neighbours, print the send event, and reset
- * the hello timer (sending resets it). Returns 0, or -1 if netproc is gone.
- */
+/* Broadcast our view to all neighbours. Counts as a beacon, so it also resets
+ * the hello timer. Returns -1 if netproc is gone. */
 static int do_send(int sock, const struct node_state* s, double* hello_deadline) {
 	double now = now_ms();
 	struct bf_msg m;
@@ -62,7 +55,7 @@ static int do_send(int sock, const struct node_state* s, double* hello_deadline)
 
 	printf("time=%.01f\tMessage sent to all neighbors\n", event_time(now));
 	fflush(stdout);
-	*hello_deadline = now + HELLO_TIMEOUT * 1000;  /* seconds -> ms */
+	*hello_deadline = now + HELLO_TIMEOUT * 1000;  /* seconds to ms */
 	return 0;
 }
 
@@ -107,14 +100,14 @@ int main(int argc, char* argv[]) {
 	struct node_state s;
 	node_init(&s, node_id, costs, num_links);
 
-	/* Initial state, then an initial broadcast (coming online = a change). */
+	/* Announce ourselves right away: coming online is a change worth sharing. */
 	print_state(&s, now_ms());
 	if (do_send(sock, &s, &hello_deadline) < 0) goto cleanup;
 
 	for (;;) {
 		double now = now_ms();
 
-		/* Next deadline = soonest of lifetime, hello, and (if any) root expiry. */
+		/* Sleep until the first of our three deadlines comes due. */
 		double next = lifetime_deadline;
 		if (hello_deadline < next) next = hello_deadline;
 		if (!node_is_self_root(&s) && s.exp_deadline_ms < next)
@@ -139,7 +132,7 @@ int main(int argc, char* argv[]) {
 
 		now = now_ms();
 
-		/* 1) Lifetime first: graceful shutdown. */
+		/* Time's up before anything else we might do. */
 		if (now >= lifetime_deadline) {
 			printf("time=%.01f\tLifetime expired. Shutting down.\n",
 				   event_time(now));
@@ -147,16 +140,16 @@ int main(int argc, char* argv[]) {
 			break;
 		}
 
-		/* 2) Incoming frame: process one update. */
 		if (r > 0 && FD_ISSET(sock, &rfds)) {
 			uint8_t link;
 			uint8_t payload[PAYLOAD_LEN];
 			int rc = net_recv_frame(sock, &link, payload);
-			if (rc <= 0) {  /* 0 = EOF, -1 = error: netproc gone */
+			if (rc <= 0) {  /* netproc closed on us or errored out */
 				fprintf(stderr, "netproc connection lost; shutting down\n");
 				break;
 			}
-			if (link < (uint8_t) s.num_links) {  /* ignore malformed link */
+			/* Skip anything tagged with a link we don't actually have. */
+			if (link < (uint8_t) s.num_links) {
 				struct bf_msg m;
 				bf_msg_unpack(&m, payload);
 				if (node_handle_msg(&s, link, &m, now)) {
@@ -166,14 +159,14 @@ int main(int argc, char* argv[]) {
 			}
 		}
 
-		/* 3) Root-info expiry (root crash recovery): become our own root. */
+		/* Our root has been quiet too long -- assume it's gone and take over. */
 		if (!node_is_self_root(&s) && now_ms() >= s.exp_deadline_ms) {
 			node_expire(&s);
 			print_state(&s, now_ms());
 			if (do_send(sock, &s, &hello_deadline) < 0) break;
 		}
 
-		/* 4) Hello beacon: periodic resend even without a change. */
+		/* Nothing changed but the beacon is due, so send one anyway. */
 		if (now_ms() >= hello_deadline) {
 			if (do_send(sock, &s, &hello_deadline) < 0) break;
 		}

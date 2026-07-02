@@ -5,33 +5,17 @@
 #include <stdint.h>
 #include <string.h>
 
-/*
- * Wire framing (as enforced by netproc):
- *   every transfer is exactly FRAME_LEN bytes = 1 link byte + PAYLOAD_LEN bytes.
- *   frame[0]      = link number (0xFF == broadcast to all neighbors)
- *   frame[1..127] = the 127-byte payload, copied verbatim by netproc.
- *
- * The payload format below is private to bfproc: netproc never inspects it and
- * the grader runs only our own bfproc instances together, so there is no
- * interoperability constraint on field widths or units.
- */
+/* netproc frames are a fixed 128 bytes: a link byte (0xFF = broadcast) plus a
+ * 127-byte payload. It rewrites the link byte to the receiver's own index and
+ * leaves the payload alone, so the payload format is entirely ours. */
 #define FRAME_LEN 128
 #define PAYLOAD_LEN 127
 #define LINK_BROADCAST 0xFF
 
-/*
- * Update message (cf. BPDU). All fields are 32-bit, network byte order on wire.
- *
- *   root   - myRoot: smallest ID known to the sender.
- *   cost   - myCost: sender's cost to root.
- *   id     - myID:   sender's own ID (this becomes the receiver's "parent").
- *   exp_ms - expTime: remaining lifetime, in MILLISECONDS.
- *
- * The PDF gives no wire unit for expTime ("expTime = 100" is illustrative). We
- * use milliseconds because the output is printed to 0.1s and the timeouts are
- * 2s/6s, so aging needs sub-second resolution; integer-second expTime would
- * truncate and drift. 16 bytes used, the rest of the 127-byte payload is zeroed.
- */
+/* Our update message, like a spanning-tree BPDU. Sent in network byte order,
+ * rest of the payload zeroed. exp_ms is in milliseconds: we print time to 0.1s
+ * with 2s/6s timeouts, so whole seconds would round away gaps we need. id is the
+ * sender, which the receiver records as its parent. */
 struct bf_msg {
 	uint32_t root;
 	uint32_t cost;

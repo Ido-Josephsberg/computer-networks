@@ -23,11 +23,11 @@ int node_is_self_root(const struct node_state* s) {
 int node_handle_msg(struct node_state* s, int link, const struct bf_msg* m,
 					double now_ms) {
 	uint32_t link_cost = s->costs[link];
-	uint32_t cand = m->cost + link_cost;  /* cost to m->root via this neighbor */
+	uint32_t cand = m->cost + link_cost;  /* cost to this root via this neighbour */
 	int changed = 0;
 
 	if (m->root < s->my_root) {
-		/* Strictly smaller root: always adopt; deadline starts fresh. */
+		/* Smaller root wins; take it and restart its clock. */
 		s->my_root = m->root;
 		s->my_cost = cand;
 		s->parent_link = link;
@@ -35,29 +35,28 @@ int node_handle_msg(struct node_state* s, int link, const struct bf_msg* m,
 		s->exp_deadline_ms = now_ms + (double) m->exp_ms;
 		changed = 1;
 	} else if (m->root == s->my_root && !node_is_self_root(s)) {
-		/* Same (non-self) root: this proves the root is alive, so refresh the
-		 * deadline -- but expTime may only INCREASE (ignore stale duplicates). */
+		/* Same root, still alive: push the deadline out, but never backwards. */
 		double new_deadline = now_ms + (double) m->exp_ms;
 		if (new_deadline > s->exp_deadline_ms) s->exp_deadline_ms = new_deadline;
 
 		if (m->id == s->parent_id) {
-			/* Update straight from our next hop: must follow it even if the
-			 * cost INCREASED (distance-vector correctness, e.g. on a loop). */
+			/* From our own parent, so follow it even if the cost rose - ignoring
+			 * that is how loops count to infinity. */
 			s->parent_link = link;
 			if (cand != s->my_cost) {
 				s->my_cost = cand;
 				changed = 1;
 			}
 		} else if (cand < s->my_cost) {
-			/* A strictly cheaper path via a different neighbor: switch. */
+			/* A cheaper path via someone else. */
 			s->my_cost = cand;
 			s->parent_link = link;
 			s->parent_id = m->id;
 			changed = 1;
 		}
-		/* Equal cost via a non-parent: keep current parent (no flapping). */
+		/* A tie from a non-parent isn't worth flapping the tree for. */
 	}
-	/* m->root > my_root, or m->root == my_id while we are root: ignore. */
+	/* Bigger root, or our own ID while we're root: ignore. */
 
 	return changed;
 }
@@ -77,11 +76,11 @@ void node_build_msg(const struct node_state* s, struct bf_msg* m,
 	m->cost = s->my_cost;
 	m->id = s->my_id;
 	if (node_is_self_root(s)) {
-		/* A root's message has "infinite" life; originate at ROOT_TIMEOUT.
-		 * (seconds -> ms: the mandatory x1000 conversion.) */
+		/* A root's messages don't expire; stamp ROOT_TIMEOUT (seconds to ms). */
 		m->exp_ms = (uint32_t) (ROOT_TIMEOUT * 1000);
 	} else {
-		double rem = s->exp_deadline_ms - now_ms;  /* aging happens here */
+		/* Time left on our root info; the absolute deadline makes this count down. */
+		double rem = s->exp_deadline_ms - now_ms;
 		if (rem < 0) rem = 0;
 		m->exp_ms = (uint32_t) rem;
 	}

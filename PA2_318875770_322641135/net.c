@@ -1,3 +1,6 @@
+
+
+
 #include "net.h"
 
 #include <arpa/inet.h>
@@ -9,14 +12,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-/*
- * Return-code conventions (callers must match these):
- *   writen / net_send_id / net_send_frame :  0 = success, -1 = error/peer gone.
- *   net_recv_frame                        :  1 = success, 0 = EOF, -1 = error.
- *   readn (internal)                      :  bytes read (n on success, <n EOF), -1 err.
- */
-
-/* Write exactly n bytes (MSG_NOSIGNAL). Returns 0, or -1 on error/peer gone. */
+/* Send the whole buffer. MSG_NOSIGNAL so a dead netproc gives us an error to
+ * handle instead of killing us with SIGPIPE. */
 static int writen(int fd, const void* buf, size_t n) {
 	const char* p = buf;
 	size_t left = n;
@@ -33,8 +30,7 @@ static int writen(int fd, const void* buf, size_t n) {
 	return 0;
 }
 
-/* Defensive fallback for short reads. Returns bytes read (n on success, <n on
- * EOF), or -1 on error. */
+/* Backstop for a short recv; returns whatever it managed to read. */
 static ssize_t readn(int fd, void* buf, size_t n) {
 	char* p = buf;
 	size_t left = n;
@@ -101,12 +97,13 @@ int net_recv_frame(int sock, uint8_t* link, uint8_t payload[PAYLOAD_LEN]) {
 		r = recv(sock, frame, FRAME_LEN, MSG_WAITALL);
 	} while (r < 0 && errno == EINTR);
 
-	if (r == 0) return 0;   /* netproc closed the connection */
+	if (r == 0) return 0;  /* netproc hung up */
 	if (r < 0) return -1;
-	if (r < FRAME_LEN) {    /* defensive fallback for a short MSG_WAITALL read */
+	/* MSG_WAITALL normally gives the whole frame; read any remainder by hand. */
+	if (r < FRAME_LEN) {
 		ssize_t r2 = readn(sock, frame + r, (size_t) (FRAME_LEN - r));
 		if (r2 < 0) return -1;
-		if (r2 < (ssize_t) (FRAME_LEN - r)) return 0;  /* EOF mid-frame */
+		if (r2 < (ssize_t) (FRAME_LEN - r)) return 0;  /* hung up mid-frame */
 	}
 
 	*link = frame[0];
