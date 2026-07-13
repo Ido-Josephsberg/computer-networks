@@ -1,5 +1,5 @@
 /*
- * bfproc: one node in the distributed Bellman-Ford network. It talks only to its
+ * nodeproc: one node in the distributed Bellman-Ford network. It talks only to its
  * direct neighbours (via netproc) and works out the root, its distance to it,
  * and the next hop toward it.
  *

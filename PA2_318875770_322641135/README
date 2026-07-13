@@ -8,7 +8,7 @@ Team
 
 Overview
 --------
-bfproc is the node process for the distributed Bellman-Ford algorithm. Every node
+nodeproc is the node process for the distributed Bellman-Ford algorithm. Every node
 communicates only with its direct neighbours, through the provided netproc
 simulator, and from those exchanges it works out three things: the root, which is
 the smallest node ID in the reachable network, the cost of its shortest path to
@@ -18,7 +18,7 @@ wrote only the node process. netproc is given and we do not modify it.
 
 Building
 --------
-Run "make" to produce the executable named bfproc, and "make clean" to remove the
+Run "make" to produce the executable named nodeproc, and "make clean" to remove the
 build products. The code is compiled with:
 
   -Wall -Wextra -O2 -std=c11 -D_POSIX_C_SOURCE=200809L
@@ -31,11 +31,11 @@ than something the grader needs to supply. The build is clean, with no warnings.
 
 Running
 -------
-  bfproc <netproc_address> <node_id> <lifetime_sec> <cost1> [cost2 ...]
+  nodeproc <netproc_address> <node_id> <lifetime_sec> <cost1> [cost2 ...]
 
 For example:
 
-  ./bfproc 127.0.0.1 2 16 $(./costs.sh topology.csv 2)
+  ./nodeproc 127.0.0.1 2 16 $(./costs.sh topology.csv 2)
 
 netproc_address is the IP of the host running netproc. The port is fixed at 6789.
 node_id is this node's integer ID, and lifetime_sec is how many seconds the
@@ -54,7 +54,7 @@ Source files
   net.h, net.c     Socket setup, the ID handshake, and 128-byte frame I/O.
   bfnode.h, bfnode.c  The node state and the Bellman-Ford update, refresh, and
                       expiry logic, kept free of any socket code.
-  bfproc.c     main(): argument parsing, the select() event loop, the timers, and
+  nodeproc.c   main(): argument parsing, the select() event loop, the timers, and
                all of the printed output.
 
 
@@ -100,8 +100,8 @@ proto.h. It uses the first 16 bytes and zero-pads the rest. All four fields are
 32-bit and sent in network byte order: root (the smallest known ID), cost (the
 cost to that root), id (the sender, which becomes the receiver's parent), and
 exp_ms (the remaining lifetime, in milliseconds). The payload is private to
-bfproc, since netproc never looks inside it and the grader runs only our own
-bfproc instances together, so we were free to choose the layout and units.
+nodeproc, since netproc never looks inside it and the grader runs only our own
+nodeproc instances together, so we were free to choose the layout and units.
 
 
 Multiple timeouts and the choice of units
