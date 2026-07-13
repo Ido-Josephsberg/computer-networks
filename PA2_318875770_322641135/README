@@ -11,9 +11,9 @@ Overview
 bfproc is the node process for the distributed Bellman-Ford algorithm. Every node
 communicates only with its direct neighbours, through the provided netproc
 simulator, and from those exchanges it works out three things: the root, which is
-the smallest node ID in the reachable network; the cost of its shortest path to
-that root; and its parent, meaning the next-hop node on the way to the root. We
-wrote only the node process; netproc is given and we do not modify it.
+the smallest node ID in the reachable network, the cost of its shortest path to
+that root, and its parent, meaning the next-hop node on the way to the root. We
+wrote only the node process. netproc is given and we do not modify it.
 
 
 Building
@@ -24,7 +24,7 @@ build products. The code is compiled with:
   -Wall -Wextra -O2 -std=c11 -D_POSIX_C_SOURCE=200809L
 
 The _POSIX_C_SOURCE definition is necessary because we use clock_gettime and
-CLOCK_REALTIME, which are POSIX rather than ISO C; under strict -std=c11 they are
+CLOCK_REALTIME, which are POSIX rather than ISO C. Under strict -std=c11 they are
 not declared without it, so the macro is part of CFLAGS in the Makefile rather
 than something the grader needs to supply. The build is clean, with no warnings.
 
@@ -37,7 +37,7 @@ For example:
 
   ./bfproc 127.0.0.1 2 16 $(./costs.sh topology.csv 2)
 
-netproc_address is the IP of the host running netproc; the port is fixed at 6789.
+netproc_address is the IP of the host running netproc. The port is fixed at 6789.
 node_id is this node's integer ID, and lifetime_sec is how many seconds the
 process runs before shutting down gracefully. The remaining arguments are the
 link costs in port order, exactly as the provided costs.sh script emits them
@@ -48,7 +48,7 @@ tag the frames arriving on that link.
 
 Source files
 ------------
-  bf.h         Provided constants (PORT, HELLO_TIMEOUT, ROOT_TIMEOUT); unmodified.
+  bf.h         Provided constants (PORT, HELLO_TIMEOUT, ROOT_TIMEOUT), unmodified.
   proto.h      The wire framing and the update-message struct, with pack/unpack.
   time_util.h  now_ms(), the single CLOCK_REALTIME time source (header-only).
   net.h, net.c     Socket setup, the ID handshake, and 128-byte frame I/O.
@@ -69,8 +69,8 @@ every send.
 
 We keep three timers, each stored as an absolute deadline in milliseconds: the
 hello timer, which guarantees a message at least every HELLO_TIMEOUT seconds and
-is reset whenever we send; the root-expiry timer, which fires when the current
-(non-self) root information expires; and the lifetime timer. On each pass through
+is reset whenever we send, the root-expiry timer, which fires when the current
+(non-self) root information expires, and the lifetime timer. On each pass through
 the loop we take the soonest of the three deadlines, subtract the current time,
 express the result as a struct timeval, and hand that to select() as its timeout.
 This is the approach the course FAQ recommends, namely doing the arithmetic on a
@@ -81,10 +81,10 @@ lifetime first, then any incoming frame, then root expiry, then the hello timer.
 Data structures
 ---------------
 The whole of a node's view lives in one struct, node_state (see bfnode.h): my_id,
-my_root and my_cost; parent_link (the local link index of the next hop) together
-with parent_id (the next hop's node ID, which is what we print); exp_deadline_ms,
+my_root and my_cost, parent_link (the local link index of the next hop) together
+with parent_id (the next hop's node ID, which is what we print), exp_deadline_ms,
 the absolute time at which the current root information expires (infinite while we
-are our own root); and costs[], the per-link cost array with its length.
+are our own root), and costs[], the per-link cost array with its length.
 
 
 Packet structure
@@ -119,7 +119,7 @@ rules that do matter are unit-agnostic: a message originates with expTime equal 
 ROOT_TIMEOUT, real elapsed time is subtracted on every forward, and the value may
 only increase when a fresher message arrives for the same root. Since output is
 printed to a tenth of a second and the timeouts are 2 and 6 seconds, aging needs
-sub-second resolution; an integer-second expTime would truncate and drift, which
+sub-second resolution. An integer-second expTime would truncate and drift, which
 could cause premature or late expiry. Milliseconds avoid that.
 
 Aging is implemented with absolute deadlines. When a node adopts root information
@@ -142,10 +142,10 @@ C + lc as our cost, and we start a fresh deadline. If R equals our current root
 and we are not our own root, we first refresh the deadline if E would make it
 later. We then follow our current parent if the message came from it, accepting
 its cost even if it has increased, which is what keeps distance-vector correct in
-the presence of loops; otherwise we switch to S only if it offers a strictly
+the presence of loops. Otherwise we switch to S only if it offers a strictly
 cheaper path, and on an equal-cost tie we keep our current parent so the tree does
 not flap. If R is larger than our root we ignore the message. We print a new state
-line and broadcast only when the root or the cost actually changed; refreshing a
+line and broadcast only when the root or the cost actually changed. Refreshing a
 deadline on its own is not a change.
 
 
